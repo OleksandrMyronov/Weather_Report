@@ -1,0 +1,299 @@
+---
+title: "Weather report"
+author: "Oleksandr Myronov"
+date: "10 05 2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# TORNADOS are the most dangerous weather event with respect to population health and FLOODS caused the most economical damage in US during 2001-2011 years.
+
+  In this study we explored weather data records for period 01.01.2001-30.11.2011, which caused fatalities, injuries or economic damage (144826 records in subset). We defined tornado as weather event, which caused the most fatalities (1152, 20.9% of total) and injuries (14332, 44.3% of total) among all weather-related, across the whole USA. Tornado is generalized word for similar weather events, like whirlwind, landspout, waterspout and funnel cloud. Tornado statistics include [2011 Super Outbreak](https://en.wikipedia.org/wiki/2011_Super_Outbreak) period, which is not common annual activity for tornadoes. 
+  
+  With respect to economics, flood was defined as most harmful event, which caused the most property damage (145.5 Billions USD, 44.8% of total) and crops damage (4.4 Billions USD, 21.9% of total, but flood is just TOP-2 for crops, TOP-1 is drought) among all weather-related damage, across the whole USA. Flood is generalized word for high water and water streams.
+  
+  TOP-12 dangerous weather events caused ~95% of injuries and fatalities, and similar TOP-12 caused 99.4% economic damage. More detailed statistics can be found in **Results** section.  
+  
+  In this study we explored that the most dangerous and harmful events significantly differs across the US regions, due to different natural conditions. Short summary about TOP-1 dangerous and TOP-1 harmful event for each region can be found in **Localization Summary** section. 
+
+
+
+
+## Data Processing
+
+#### Loading Data
+Original dataset was loaded from [https://d396qusza40orc.cloudfront.net](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2","repdata_data_StormData.csv.bz2) Documentation about original dataset can be found [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf).
+Only specific columns(see below) were extracted from original dataset for this analysis.
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+library(dplyr)
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+              "repdata_data_StormData.csv.bz2")
+read.csv("repdata_data_StormData.csv.bz2", header = TRUE) %>%
+  select(STATE,                 #US state index
+         BGN_DATE,              #Date of event
+         EVTYPE,                #Type of event
+         FATALITIES,            #Number of fatalities
+         INJURIES,              #Number of injuries
+         PROPDMG,               #Estimated property damage in USD
+         PROPDMGEXP,            #Property damage coefficient, "K"-thousands, "M"-millions, "B"-billions  
+         CROPDMG,               #Estimated crops damage in USD
+         CROPDMGEXP)->stormdata #Crops damage coefficient, "K"-thousands, "M"-millions, "B"-billions
+{
+print(paste("Number of records in original dataset:",length(stormdata$EVTYPE)))
+print(paste("Number of unique event type labels in original dataset:",length(unique(stormdata$EVTYPE))))
+}
+   
+```  
+#### Preprocessing data
+Dataset is large, and we need to preprocess data. Weather events without fatalities, injuries and damage are out of interest for this study and we filter out cases without at least one of this consequences. Then we convert damage variables to the proper scale. Date variable is converted to date type, and then we filter records since 01-01-2001 which are more complete and actual.
+```{r, cache=TRUE}
+#Function for damage coefficient variables conversion
+convEXP<-function(power10){
+    (power10=="K")*10^3+(power10=="M")*10^6+(power10=="B")*10^9 
+}
+#Preprocessing data
+stormdata %>% 
+filter((FATALITIES!=0)|(INJURIES!=0)|(PROPDMG!=0)|(CROPDMG!=0)) %>%  #filtering out no-effect events
+mutate(PROPDMG=PROPDMG*convEXP(PROPDMGEXP),                          #converting property damage
+         CROPDMG=CROPDMG*convEXP(CROPDMGEXP),                        #converting crops damage
+         PROPDMGEXP=NULL, CROPDMGEXP=NULL,                           #deleting coefficient columns
+         BGN_DATE=as.Date(BGN_DATE, format='%m/%e/%Y'))         %>%  #formatting date
+filter(BGN_DATE>=as.Date("01-01-2001",format="%d-%m-%Y"))->stormdata #filtering by date  
+
+```
+
+Set of event labels is quite large because of synonims and misspelings. We convert this set to more strict, using regex.  
+```{r, cache=TRUE}  
+tidyLabels<-function(text){
+  toupper(text) %>%
+  sub(pattern="^[., ]|[., ]$", replacement="") %>%
+  sub(pattern="[-_]", replacement=" ") %>%   
+  sub(pattern="S$", replacement="") %>%
+  sub(pattern="S ", replacement=" ") %>%
+  sub(pattern="SEVERE ", replacement="") %>%
+  sub(pattern="(TSTM.*)|(TH?UN?D?E+RE?S?[TOR]{3}M).*", replacement="THUNDERSTORM") %>%
+  sub(pattern="^LIG[HN]TN?ING.*", replacement="LIGHTNING") %>%  
+  sub(pattern="(.*BLIZZARD.*)|(.*WINTER STORM.*)|(.*WIND ?CHILL.*)|(.*WINTER WEATHER.*)|(.*WINTRY MIX.*)", 
+      replacement="BLIZZARD") %>%
+  sub(pattern="(^HURRICANE.*)|(^TYPHOON.*)|(^TROPICAL STORM.*)", replacement="HURRICANE") %>%
+  sub(pattern="(^TORN[ADO]{3}.*)|(^WHIRLWIND)|(.*WATERSPOUT.*)|(.*LANDSPOUT.*)|(.*FUNNEL CLOUD.*)", 
+      replacement="TORNADO") %>%
+  sub(pattern="(.*HEAT.*)|(.*HYPERTHERMIA.*)|(.*WARM.*)", replacement="HEAT") %>% 
+  sub(pattern="(.*COLD.*)|(.*HYPOTHERMIA.*)|(.*FROST.*)|(.*LOW TEMPERATURE.*)|(.*FREEZE.*)", 
+      replacement="FROST") %>%  
+  sub(pattern="(.*FLOOD.*)|(.*WATER.*)|(.*STREAM.*)|(.*FLD.*)", replacement="FLOOD") %>%
+  sub(pattern="^AVALANCH?E.*", replacement="AVALANCHE") %>%
+  sub(pattern=".*FIRE.*", replacement="WILDFIRE") %>%
+  sub(pattern="(HIGH)|(STRONG)|(GUSTY)|(FORCE)", replacement="STRONG") %>%
+  sub(pattern="(.*MARINE.*)|(.*COASTAL ?STORM.*)", replacement="MARINE/COASTAL STORM") %>%
+  sub(pattern="(.*STRONG  ?WIND.*)|(WIND)", replacement="STRONG WIND") %>%
+  sub(pattern="(.*STRONG WIND.*)", replacement="STRONG WIND") %>%
+  sub(pattern=".*FOG.*", replacement="FOG") %>% 
+  sub(pattern=".*ICE.+STORM.*", replacement="Ice STORM") %>% 
+  sub(pattern="(.*FREEZING.*)|(.*RAIN/SNOW.*)|(.*IC[EY].*)|(.*GLAZE.*)|(.*SLEET.*)|(.*MIXED PRECIP.*)", 
+      replacement="FREEZING Rain/ice") %>%
+  sub(pattern="(.*RAIN.*)|(.*SHOWER.*)|(.*PRECIPITATION.*)", replacement="HEAVY RAIN") %>% 
+  sub(pattern="(.*SNOW.*)", replacement="HEAVY SNOW") %>% 
+  sub(pattern="RIP CURRENT.*", replacement="RIP CURRENT") %>% 
+  sub(pattern="(.*SURF.*)|(.*SEA$)|(.*SWELL.*)|(.*WAVE.*)", replacement="HEAVY SURF") %>% 
+  sub(pattern="(.*SLIDE.*)|(.*LANDSLUMP.*)", replacement="LANDSLIDE") %>%
+  sub(pattern="(.*SURGE.*)", replacement="COASTAL SURGE") %>%
+  sub(pattern="(.*EROSION.*)", replacement="COASTAL EROSION") %>%
+  sub(pattern=".*HAIL.*", replacement="HAIL") %>%
+  toupper
+}
+#Processing event type labels with regex
+stormdata<-mutate(stormdata, EVTYPE=tidyLabels(EVTYPE))
+{
+print(paste("Number of records in preprocessed dataset:", length(stormdata$EVTYPE)))
+print(paste("Number of unique event type labels in preprocessed dataset:",length(unique(stormdata$EVTYPE))))
+}
+```
+
+Set of event type labels in not almost clean, but number of labels has significantly reduced and it is much suitable for analysis.
+
+### Data Analysis
+
+#### Evaluating harmful events with respect to population health
+
+In this study we call events "dangerous" with respect to high fatalities and injuries rate and "harmful" with respect to economic damage. We need to determine metric for measuring how "dangerous" event is with respect to population health. Some events are much more fatal and others cause more injuries. For this study we arrange events by sum of (Total Fatalities) + (Total Injuries)/10.
+```{r, cache=TRUE}
+stormdata                            %>%
+group_by(EVTYPE)                     %>%                   #grouping by event type
+summarize(TOTALFAT=sum(FATALITIES),                        #summarizing total fatalities
+          TOTALINJ=sum(INJURIES))    %>%                   #summarizing total injuries
+mutate(FATpercent=round(TOTALFAT*100/sum(TOTALFAT),1),     #adding percent of overall fatalities
+       INJpercent=round(TOTALINJ*100/sum(TOTALINJ),1),     #adding percent of overall injuries
+       )                             %>%
+arrange(desc(TOTALFAT+TOTALINJ/10)) -> popharm             #arranging by fatality+injuries/10
+
+popharm     %>% 
+head(12)    %>%                                            #Selecting TOP-12 events
+select(EVTYPE, TOTALFAT,                                   #Selecting fatalities and injuries columns
+       FATpercent, TOTALINJ, INJpercent) -> popharmSub 
+with (popharmSub, {   
+      print(paste("TOP-12 dangerous weather event types caused",round(sum(TOTALFAT)*100/sum(popharm$TOTALFAT),1),
+            "% of total fatalities and",round(sum(TOTALINJ)*100/sum(popharm$TOTALINJ),1),
+            "% of total injuries in US since 01.01.2001 to 30.11.2011"))
+})
+{
+print("Statistics for TOP-12 dangerous event types")
+print.data.frame(popharmSub)
+}
+```
+
+
+#### Evaluating harmful events with respect to economic consequences
+
+For evaluating economic damage in this study we arrange event type summary by sum of property and estimated crops damage. 
+```{r, cache=TRUE}
+stormdata                            %>%
+group_by(EVTYPE)                     %>%                     #grouping by event type
+summarize(TOTALPROP=sum(PROPDMG),                            #summarizing total property damage
+          TOTALCROP=sum(CROPDMG))    %>%                     #summarizing total crops damage
+mutate(PROPpercent=round(TOTALPROP*100/sum(TOTALPROP),1),    #percent of overall property damage
+       CROPpercent=round(TOTALCROP*100/sum(TOTALCROP),1),    #percent of overall crops damage
+       )                             %>%
+arrange(desc(TOTALPROP+TOTALCROP)) -> ecoharm                #arranging by property+crop damage
+
+ecoharm     %>% 
+head(12)    %>%                                              #Selecting TOP-12 events
+select(EVTYPE, TOTALPROP,                                    #Selecting economic damage columns
+       PROPpercent, TOTALCROP, CROPpercent) -> ecoharmSub 
+with (ecoharmSub, {   
+      print(paste("TOP-12 harmful weather event types caused",
+                  round(sum(TOTALPROP)*100/sum(ecoharm$TOTALPROP),1),
+                  "% of total economic damage and",
+                  round(sum(TOTALCROP)*100/sum(ecoharm$TOTALCROP),1),
+                  "% of total crops damage in US since 01.01.2001 to 30.11.2011"))
+})
+{
+print("Statistics for TOP-12 harmful event types")
+print.data.frame(ecoharmSub)
+}
+
+```
+
+## Results
+
+```{r, cache=TRUE}
+#Plotting barplots for fatalities and injuries statistics
+popharmSub %>%
+arrange(TOTALFAT+TOTALINJ/10) %>%   #rearrange for plotting most harmful on top 
+with ( {
+        par(mfrow=c(1,2), mar=c(4,7,1,1)) 
+        barplot(TOTALFAT,horiz=T, names.arg = EVTYPE, cex.names = 0.75, las=1, col="red2", main="Total fatalities")
+        mtext("Total population damage from TOP-12 dangerous weather",side=1,line=2, adj=0)
+        mtext(" conditions in USA, 2001-2011 years",side=1,line=3, adj=0)
+        par(mar=c(4,0,1,1))
+        barplot(TOTALINJ,horiz=T, col="gray",main="Total injuries")
+})
+
+with (head(popharm,1), {
+print(paste("The most dangerous weather event was", EVTYPE, "which caused",
+            TOTALFAT, "fatalities (", FATpercent,"% of total due to weather) and ",
+            TOTALINJ, "injuries (", INJpercent, "% of total due to weather)"))
+})
+
+```
+
+```{r, cache=TRUE}
+#Plotting barplot for economic damage statistics
+pal<-c("tan1", "yellowgreen")
+ecoharmSub %>%
+arrange(TOTALPROP+TOTALCROP) %>%   #rearrange for plotting most harmful on top 
+with ( {
+        par(mfrow=c(1,1), mar=c(4,7,1,1)) 
+        barplot(rbind(TOTALPROP/10^9, TOTALCROP/10^9), horiz=T, names.arg = EVTYPE, cex.names = 0.75, las=1, 
+                col=pal, beside=F, main="Total economic damage, Billions USD")
+        legend("bottomright", lty = 1, lwd=10, col=pal, legend=c("Property damage", "Crops damage"), bty="n")
+        mtext("Total economic damage from TOP-12 dangerous weather",side=1,line=2, adj=0)
+        mtext(" conditions in USA, 2001-2011 years",side=1,line=3, adj=0)
+})
+
+with (head(ecoharm,1), {
+            (paste("The most harmful weather event was", EVTYPE, "which caused",
+            TOTALPROP/10^9, "Billions USD economic damage (", 
+            PROPpercent,"% of total due to weather) and ",
+            TOTALCROP/10^9, "Billions USD crops damage (", 
+            CROPpercent, "% of total due to weather)"))
+})
+
+```
+
+Now we look for some uncommon peaks for better understanding if there are any rare events with significant effect: 
+```{r cache=TRUE}
+library(lattice)
+stormdata %>%
+filter(EVTYPE %in% popharmSub$EVTYPE) %>%    #filtering just events from top-12 dangerous
+with ( {
+    xyplot(INJURIES+FATALITIES~BGN_DATE|EVTYPE, 
+           type="o", cex=0.5,
+           col=c("blue","red"),
+           layout=c(4,3),
+           xlab="Time period",
+           ylab="Number of victims",
+           main="Dangerous weather condition patterns",
+           key=list(space="top",
+           lines=list(col=c("blue","red"), lwd=5),
+           columns=2,
+           text=list(c("INJURIES", "FATALITIES"),
+                     cex=0.75)))
+})
+
+```
+
+We can see, that in 2011 there was several tornadoes with significant number of victims, but this is not common annual pattern. Thanks to Wikipedia, we can find that this is [2011 Super Outbreak](https://en.wikipedia.org/wiki/2011_Super_Outbreak). Although this outlier influenced our results, we can't simply throw away this observations, because some rare events may become more often due to the climate change. We just need to study future observations more carefully.
+
+## Localization summary
+
+#### TOP-1 dangerous events across the regions.
+
+Weather conditions may differ significantly across the US, so it may be useful to look at top dangerous events across regions.
+As previous, we determine metric for measuring how harmful event is with respect to population health. For this study we arrange events by sum of (Total Fatalities) + (Total Injuries)/10.
+```{r, message=FALSE, cache=TRUE}
+stormdata                            %>%
+group_by(STATE,EVTYPE)               %>%    #grouping by state and event type
+summarize(TOTALFAT=sum(FATALITIES),         #summarizing fatalities
+          TOTALINJ=sum(INJURIES),           #summarizing injuries
+          TOTALPROP=sum(PROPDMG),           #summarizing total property damage
+          TOTALCROP=sum(CROPDMG))    %>%    #summarizing total crops damage
+arrange(desc(STATE),                        
+        desc(TOTALFAT+TOTALINJ/10),         #arrange events by victims
+        desc(TOTALPROP+TOTALCROP)) -> statesummary  #then damage, if no victims
+
+topdanger<-filter(statesummary, STATE=="")  #creating empty dataframe
+
+for (i in unique(statesummary$STATE)) {     #iterating across the states
+  statesummary %>%
+  filter(STATE==i) %>%                      #filter specific state
+  head(1) %>%                               #get TOP-1 event
+  rbind(topdanger) -> topdanger
+}
+{
+print("Summary table for TOP-1 dangerous events across the regions (property and crops damage summary included)")  
+print.data.frame(topdanger)
+}
+```
+
+#### TOP-1 harmful events across the regions.
+
+We can see, that dangerous weather conditions vary across the regions. Now let's look at TOP-1 local harmful weather conditions. We use (Total property damage)+(Total crops damage) as metric for economic damage.
+```{r, cache=TRUE}
+statesummary %>%                            
+arrange(desc(STATE),                        #rearrange events by damage
+        desc(TOTALPROP+TOTALCROP))->statesummary
+topharm<-filter(statesummary, STATE=="")    #creating empty dataframe
+for (i in unique(statesummary$STATE)) {     
+  statesummary %>%
+  filter(STATE==i) %>%                      #filter specific state
+  head(1) %>%                               #get TOP-1 event
+  rbind(topharm) -> topharm
+}
+{
+print("Summary table for TOP-1 dangerous events across the regions (total fatalities and injuries included)") 
+print.data.frame(topharm)
+}
+```
+Harmful weather conditions also vary, and FLOOD is the most common event type. Due to different natural conditions, it's better to specify the most dangerous and harmful weather events for each region. 
